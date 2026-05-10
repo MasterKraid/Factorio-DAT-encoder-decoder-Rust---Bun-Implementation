@@ -7,7 +7,7 @@ description = "CLI for parsing and compiling Factorio mod-settings.dat files."
 license = "MIT"
 readme = "README.md"
 repository = "https://github.com/MasterKraid/Factorio-DAT-encoder-decoder-Rust---Bun-Implementation"
-keywords = ["factorio", "modding", "dat", "parser", "ffi", "cli"]
+keywords = ["factorio", "modding", "dat", "parser", "ffi"]
 
 [lib]
 name = "factorio_settings" 

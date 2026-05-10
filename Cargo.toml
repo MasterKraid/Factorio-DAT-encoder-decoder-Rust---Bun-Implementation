@@ -1,16 +1,21 @@
 [package]
-name = "factorio_settings"
+name = "factorio-dat-settings"
 version = "1.0.0"
 edition = "2024"
 authors = ["Kraid | Tathagata S. under Kivx.in"]
-description = "A memory-safe, cryptographically bit-perfect Rust library and CLI for parsing and compiling Factorio mod-settings.dat files."
+description = "CLI for parsing and compiling Factorio mod-settings.dat files."
 license = "MIT"
 readme = "README.md"
 repository = "https://github.com/MasterKraid/Factorio-DAT-encoder-decoder-Rust---Bun-Implementation"
-keywords = ["factorio", "modding", "dat", "parser", "ffi"]
+keywords = ["factorio", "modding", "dat", "parser", "ffi", "cli"]
 
 [lib]
+name = "factorio_settings" 
 crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "factorio_settings_cli" 
+path = "src/main.rs"
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }

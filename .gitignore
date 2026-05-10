@@ -1,0 +1,12 @@
+# Rust compiler outputs
+target/
+
+# Dependency locks and binary targets
+**/*.rs.bk
+
+# Local testing and verification outputs
+/decoded_settings.json
+/test_decoded_back.json
+/test_encoded.dat
+/test_ffi_encoded.dat
+/py_encoded.dat

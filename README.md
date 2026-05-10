@@ -99,3 +99,27 @@ const compiledBuffer = Buffer.from(toBuffer(outBytesPtr, 0, compiledLen));
 writeFileSync("mod-settings-modified.dat", compiledBuffer);
 lib.free_bytes(outBytesPtr, compiledLen); // Free compiled bytes in Rust heap
 ```
+
+
+## Rust Native Usage
+
+You can use this directly in your Rust applications by adding it to your `Cargo.toml`:
+```bash
+cargo add factorio_settings
+```
+
+```rust
+use std::fs;
+use factorio_settings::{decode_dat_to_json, encode_json_to_dat};
+
+fn main() {
+    // Decode
+    let dat_bytes = fs::read("mod-settings.dat").unwrap();
+    let json_string = decode_dat_to_json(&dat_bytes).unwrap();
+
+    // Encode
+    let new_dat_bytes = encode_json_to_dat(&json_string).unwrap();
+    fs::write("encoded-settings.dat", new_dat_bytes).unwrap();
+}
+```
+

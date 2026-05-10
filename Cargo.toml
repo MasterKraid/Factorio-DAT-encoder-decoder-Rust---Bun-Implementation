@@ -3,7 +3,11 @@ name = "factorio_settings"
 version = "1.0.0"
 edition = "2024"
 authors = ["Kraid | Tathagata S. under Kivx.in"]
-
+description = "A memory-safe, cryptographically bit-perfect Rust library and CLI for parsing and compiling Factorio mod-settings.dat files."
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/MasterKraid/Factorio-DAT-encoder-decoder-Rust---Bun-Implementation"
+keywords = ["factorio", "modding", "dat", "parser", "ffi"]
 
 [lib]
 crate-type = ["cdylib", "rlib"]

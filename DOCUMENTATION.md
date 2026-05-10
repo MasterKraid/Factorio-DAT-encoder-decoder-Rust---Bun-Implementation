@@ -1,5 +1,8 @@
 # Factorio Settings Serialization Specifications & API Documentation
 
+> [!NOTE]
+> This specifications guide is based directly on and supplements the original research found in the [Original Binary Format Documentation](https://github.com/MasterKraid/Factorio-DAT-file-analysis/blob/main/DOCUMENTATION.md).
+
 This document contains the low-level technical specifications, serialization protocols, and API boundaries implemented inside the library. 
 
 ---

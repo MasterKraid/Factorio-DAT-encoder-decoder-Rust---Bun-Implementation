@@ -31,10 +31,16 @@ fn main() {
             match factorio_settings::decode_dat_to_json(&bytes) {
                 Ok(json_str) => {
                     if let Err(e) = fs::write(out_path, json_str) {
-                        eprintln!("[ERROR] Failed to write output JSON file '{}': {}", out_path, e);
+                        eprintln!(
+                            "[ERROR] Failed to write output JSON file '{}': {}",
+                            out_path, e
+                        );
                         process::exit(1);
                     }
-                    println!("[SUCCESS] Decoded configuration output written to: {}", out_path);
+                    println!(
+                        "[SUCCESS] Decoded configuration output written to: {}",
+                        out_path
+                    );
                 }
                 Err(err) => {
                     eprintln!("[ERROR] Decoding operation failed: {}", err);
@@ -47,7 +53,10 @@ fn main() {
             let json_str = match fs::read_to_string(in_path) {
                 Ok(s) => s,
                 Err(e) => {
-                    eprintln!("[ERROR] Failed to read input JSON file '{}': {}", in_path, e);
+                    eprintln!(
+                        "[ERROR] Failed to read input JSON file '{}': {}",
+                        in_path, e
+                    );
                     process::exit(1);
                 }
             };
@@ -55,10 +64,16 @@ fn main() {
             match factorio_settings::encode_json_to_dat(&json_str) {
                 Ok(bytes) => {
                     if let Err(e) = fs::write(out_path, bytes) {
-                        eprintln!("[ERROR] Failed to compile output binary file '{}': {}", out_path, e);
+                        eprintln!(
+                            "[ERROR] Failed to compile output binary file '{}': {}",
+                            out_path, e
+                        );
                         process::exit(1);
                     }
-                    println!("[SUCCESS] Compiled binary configuration written to: {}", out_path);
+                    println!(
+                        "[SUCCESS] Compiled binary configuration written to: {}",
+                        out_path
+                    );
                 }
                 Err(err) => {
                     eprintln!("[ERROR] Compilation failed: {}", err);

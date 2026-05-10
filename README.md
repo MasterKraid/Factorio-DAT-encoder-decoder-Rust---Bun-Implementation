@@ -1,5 +1,8 @@
 # Factorio Mod Settings Serialization Library
 
+> [!NOTE]
+> This library implements and complements the technical specifications detailed in the [Original Binary Format Documentation](https://github.com/MasterKraid/Factorio-DAT-file-analysis/blob/main/DOCUMENTATION.md).
+
 This repository contains a high-performance, memory-safe, and cryptographically bit-perfect Rust implementation for parsing and compiling Factorio `mod-settings.dat` configuration files. Designed specifically for integration with a Tauri-based desktop application using the Bun runtime, this library exposes a robust, C-compatible FFI interface while maintaining complete, byte-level exactness to Factorio's native C++ serialization logic.
 
 ## Technical Accomplishments

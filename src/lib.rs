@@ -1,4 +1,4 @@
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 use thiserror::Error;
@@ -143,13 +143,14 @@ impl<'a> BinaryReader<'a> {
 // 4. Memory-Safe Binary Stream Writer
 // ============================================================================
 
+#[derive(Default)]
 pub struct BinaryWriter {
     data: Vec<u8>,
 }
 
 impl BinaryWriter {
     pub fn new() -> Self {
-        Self { data: Vec::new() }
+        Self::default()
     }
 
     pub fn write_bytes(&mut self, bytes: &[u8]) {
@@ -320,10 +321,13 @@ fn property_tree_to_json_and_type(node: PropertyTree) -> (serde_json::Value, Str
         PropertyTree::SignedInt(i) => (serde_json::json!(i), "signed_int".to_string()),
         PropertyTree::UnsignedInt(u) => (serde_json::json!(u), "unsigned_int".to_string()),
         PropertyTree::List(items) => {
-            let arr = items.into_iter().map(|item| {
-                let (v, _) = property_tree_to_json_and_type(item);
-                v
-            }).collect();
+            let arr = items
+                .into_iter()
+                .map(|item| {
+                    let (v, _) = property_tree_to_json_and_type(item);
+                    v
+                })
+                .collect();
             (serde_json::Value::Array(arr), "list".to_string())
         }
         PropertyTree::Dictionary(dict) => {
@@ -341,9 +345,7 @@ fn infer_json_value_type(val: serde_json::Value) -> PropertyTree {
     match val {
         serde_json::Value::Null => PropertyTree::None,
         serde_json::Value::Bool(b) => PropertyTree::Bool(b),
-        serde_json::Value::Number(n) => {
-            PropertyTree::Number(n.as_f64().unwrap_or(0.0))
-        }
+        serde_json::Value::Number(n) => PropertyTree::Number(n.as_f64().unwrap_or(0.0)),
         serde_json::Value::String(s) => PropertyTree::String(s),
         serde_json::Value::Array(arr) => {
             let items = arr.into_iter().map(infer_json_value_type).collect();
@@ -361,18 +363,12 @@ fn infer_json_value_type(val: serde_json::Value) -> PropertyTree {
 
 fn json_value_to_property_tree(val: serde_json::Value, type_str: &str) -> PropertyTree {
     match type_str {
-        "bool" => {
-            PropertyTree::Bool(val.as_bool().unwrap_or(false))
-        }
-        "number" => {
-            PropertyTree::Number(val.as_f64().unwrap_or(0.0))
-        }
-        "string" => {
-            match val {
-                serde_json::Value::String(s) => PropertyTree::String(s),
-                _ => PropertyTree::String(val.to_string()),
-            }
-        }
+        "bool" => PropertyTree::Bool(val.as_bool().unwrap_or(false)),
+        "number" => PropertyTree::Number(val.as_f64().unwrap_or(0.0)),
+        "string" => match val {
+            serde_json::Value::String(s) => PropertyTree::String(s),
+            _ => PropertyTree::String(val.to_string()),
+        },
         "signed_int" => {
             if let Some(i) = val.as_i64() {
                 PropertyTree::SignedInt(i)
@@ -449,7 +445,10 @@ pub fn property_tree_to_payload(
             }
         }
 
-        settings.insert(section_name.clone(), serde_json::Value::Object(section_settings));
+        settings.insert(
+            section_name.clone(),
+            serde_json::Value::Object(section_settings),
+        );
         metadata.insert(section_name, serde_json::Value::Object(section_metadata));
     }
 
@@ -461,7 +460,9 @@ pub fn property_tree_to_payload(
     })
 }
 
-pub fn payload_to_property_tree(payload: FactorioSettingsPayload) -> Result<PropertyTree, FactorioError> {
+pub fn payload_to_property_tree(
+    payload: FactorioSettingsPayload,
+) -> Result<PropertyTree, FactorioError> {
     let mut root_dict = Vec::new();
 
     for (section_name, section_settings_val) in payload.settings.into_iter() {
@@ -470,7 +471,9 @@ pub fn payload_to_property_tree(payload: FactorioSettingsPayload) -> Result<Prop
             _ => continue,
         };
 
-        let mut section_metadata = payload.metadata.get(&section_name)
+        let mut section_metadata = payload
+            .metadata
+            .get(&section_name)
             .and_then(|v| v.as_object().cloned());
 
         let mut section_dict = Vec::new();
@@ -523,8 +526,7 @@ pub fn decode_dat_to_json(dat_bytes: &[u8]) -> Result<String, FactorioError> {
 
     let payload = property_tree_to_payload(version_str, flag, root)?;
 
-    serde_json::to_string_pretty(&payload)
-        .map_err(FactorioError::from)
+    serde_json::to_string_pretty(&payload).map_err(FactorioError::from)
 }
 
 pub fn encode_json_to_dat(json_str: &str) -> Result<Vec<u8>, FactorioError> {
@@ -558,75 +560,100 @@ pub fn encode_json_to_dat(json_str: &str) -> Result<Vec<u8>, FactorioError> {
 // 8. C-Compatible FFI Interface Exports (Perfect for Bun FFI)
 // ============================================================================
 
+/// Deserializes a binary `mod-settings.dat` memory buffer into a JSON string payload.
+///
+/// # Safety
+///
+/// This function dereferences raw pointers. The caller must guarantee that:
+/// * `dat_ptr` is a valid, initialized pointer to a byte buffer of at least `dat_len` bytes.
+/// * The memory referenced by `dat_ptr` remains immutable during execution.
 #[no_mangle]
-pub extern "C" fn decode_settings_dat(dat_ptr: *const u8, dat_len: usize) -> *mut c_char {
+pub unsafe extern "C" fn decode_settings_dat(dat_ptr: *const u8, dat_len: usize) -> *mut c_char {
     if dat_ptr.is_null() {
         return std::ptr::null_mut();
     }
-    let data = unsafe { std::slice::from_raw_parts(dat_ptr, dat_len) };
+    let data = std::slice::from_raw_parts(dat_ptr, dat_len);
     match decode_dat_to_json(data) {
-        Ok(json_str) => {
-            match CString::new(json_str) {
-                Ok(c_str) => c_str.into_raw(),
-                Err(_) => {
-                    CString::new("ERROR: Null byte found in generated JSON string").unwrap().into_raw()
-                }
-            }
-        }
+        Ok(json_str) => match CString::new(json_str) {
+            Ok(c_str) => c_str.into_raw(),
+            Err(_) => CString::new("ERROR: Null byte found in generated JSON string")
+                .unwrap()
+                .into_raw(),
+        },
         Err(err) => {
             let err_msg = format!("ERROR: {}", err);
             match CString::new(err_msg) {
                 Ok(c_str) => c_str.into_raw(),
-                Err(_) => {
-                    CString::new("ERROR: Null byte found in error message").unwrap().into_raw()
-                }
+                Err(_) => CString::new("ERROR: Null byte found in error message")
+                    .unwrap()
+                    .into_raw(),
             }
         }
     }
 }
 
+/// Serializes a JSON string configuration back into an order-preserving binary buffer.
+///
+/// # Safety
+///
+/// This function dereferences raw pointers. The caller must guarantee that:
+/// * `json_ptr` is a valid, null-terminated C-string pointer.
+/// * `out_len` is a valid, writable pointer to a `usize` value.
 #[no_mangle]
-pub extern "C" fn encode_settings_dat(json_ptr: *const c_char, out_len: *mut usize) -> *mut u8 {
+pub unsafe extern "C" fn encode_settings_dat(json_ptr: *const c_char, out_len: *mut usize) -> *mut u8 {
     if json_ptr.is_null() {
         return std::ptr::null_mut();
     }
-    let c_str = unsafe { CStr::from_ptr(json_ptr) };
+    let c_str = CStr::from_ptr(json_ptr);
     let json_str = match c_str.to_str() {
         Ok(s) => s,
         Err(_) => {
-            unsafe { *out_len = 0 };
+            *out_len = 0;
             return std::ptr::null_mut();
         }
     };
 
     match encode_json_to_dat(json_str) {
         Ok(bytes) => {
-            unsafe { *out_len = bytes.len() };
+            *out_len = bytes.len();
             let boxed = bytes.into_boxed_slice();
             Box::into_raw(boxed) as *mut u8
         }
         Err(err) => {
             eprintln!("Rust FFI serialization failure: {}", err);
-            unsafe { *out_len = 0 };
+            *out_len = 0;
             std::ptr::null_mut()
         }
     }
 }
 
+/// Frees C-string allocations generated on the Rust heap.
+///
+/// # Safety
+///
+/// This function dereferences raw pointers. The caller must guarantee that:
+/// * `ptr` is a valid raw pointer allocated previously by `decode_settings_dat`.
+/// * This pointer has not been freed or modified previously.
 #[no_mangle]
-pub extern "C" fn free_string(ptr: *mut c_char) {
+pub unsafe extern "C" fn free_string(ptr: *mut c_char) {
     if !ptr.is_null() {
-        unsafe { let _ = CString::from_raw(ptr); };
+        let _ = CString::from_raw(ptr);
     }
 }
 
+/// Frees raw compiled binary allocations generated on the Rust heap.
+///
+/// # Safety
+///
+/// This function dereferences raw pointers. The caller must guarantee that:
+/// * `ptr` is a valid raw pointer allocated previously by `encode_settings_dat`.
+/// * `len` matches the exact buffer size written during allocation.
+/// * This pointer has not been freed or modified previously.
 #[no_mangle]
-pub extern "C" fn free_bytes(ptr: *mut u8, len: usize) {
+pub unsafe extern "C" fn free_bytes(ptr: *mut u8, len: usize) {
     if !ptr.is_null() {
-        unsafe {
-            let fat_ptr = std::ptr::slice_from_raw_parts_mut(ptr, len);
-            let _ = Box::from_raw(fat_ptr);
-        }
+        let fat_ptr = std::ptr::slice_from_raw_parts_mut(ptr, len);
+        let _ = Box::from_raw(fat_ptr);
     }
 }
 

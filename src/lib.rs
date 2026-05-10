@@ -600,7 +600,10 @@ pub unsafe extern "C" fn decode_settings_dat(dat_ptr: *const u8, dat_len: usize)
 /// * `json_ptr` is a valid, null-terminated C-string pointer.
 /// * `out_len` is a valid, writable pointer to a `usize` value.
 #[no_mangle]
-pub unsafe extern "C" fn encode_settings_dat(json_ptr: *const c_char, out_len: *mut usize) -> *mut u8 {
+pub unsafe extern "C" fn encode_settings_dat(
+    json_ptr: *const c_char,
+    out_len: *mut usize,
+) -> *mut u8 {
     if json_ptr.is_null() {
         return std::ptr::null_mut();
     }

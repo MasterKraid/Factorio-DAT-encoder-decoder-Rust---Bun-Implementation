@@ -1,9 +1,32 @@
 use serde::{Serialize, Deserialize};
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
+use thiserror::Error;
 
 // ============================================================================
-// 1. Core PropertyTree Enum and Helper Models (Order-Preserving Edition)
+// 1. Core Error System
+// ============================================================================
+
+#[derive(Error, Debug)]
+pub enum FactorioError {
+    #[error("Unexpected end of file in binary stream")]
+    Eof,
+    #[error("Invalid UTF-8 string encoding: {0}")]
+    Utf8Error(#[from] std::str::Utf8Error),
+    #[error("Unknown PropertyTree type ID: {0}")]
+    UnknownTypeId(u8),
+    #[error("Factorio version identifier format must match 'X.Y.Z.W'")]
+    InvalidVersionFormat,
+    #[error("JSON parsing failure: {0}")]
+    JsonError(#[from] serde_json::Error),
+    #[error("Root property tree node must be a Dictionary type")]
+    InvalidRootNode,
+    #[error("Parse version integer failure: {0}")]
+    ParseIntError(#[from] std::num::ParseIntError),
+}
+
+// ============================================================================
+// 2. Core PropertyTree Enum and Helper Models
 // ============================================================================
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -14,9 +37,6 @@ pub enum PropertyTree {
     Number(f64),
     String(String),
     List(Vec<PropertyTree>),
-    // We represent dictionaries as a Vector of Key-Value tuples.
-    // This maintains the exact insertion order of the fields from the original
-    // binary stream, guaranteeing 100% cryptographic byte-level replication.
     Dictionary(Vec<(String, PropertyTree)>),
     SignedInt(i64),
     UnsignedInt(u64),
@@ -31,7 +51,7 @@ pub struct FactorioSettingsPayload {
 }
 
 // ============================================================================
-// 2. Memory-Safe Binary Stream Reader
+// 3. Memory-Safe Binary Stream Reader
 // ============================================================================
 
 pub struct BinaryReader<'a> {
@@ -48,60 +68,60 @@ impl<'a> BinaryReader<'a> {
         self.offset >= self.data.len()
     }
 
-    pub fn read_bytes(&mut self, len: usize) -> Result<&'a [u8], String> {
+    pub fn read_bytes(&mut self, len: usize) -> Result<&'a [u8], FactorioError> {
         if self.offset + len > self.data.len() {
-            return Err("Unexpected End of File in binary stream".to_string());
+            return Err(FactorioError::Eof);
         }
         let slice = &self.data[self.offset..self.offset + len];
         self.offset += len;
         Ok(slice)
     }
 
-    pub fn u8(&mut self) -> Result<u8, String> {
+    pub fn u8(&mut self) -> Result<u8, FactorioError> {
         let b = self.read_bytes(1)?;
         Ok(b[0])
     }
 
-    pub fn bool(&mut self) -> Result<bool, String> {
+    pub fn bool(&mut self) -> Result<bool, FactorioError> {
         Ok(self.u8()? != 0)
     }
 
-    pub fn u16(&mut self) -> Result<u16, String> {
+    pub fn u16(&mut self) -> Result<u16, FactorioError> {
         let b = self.read_bytes(2)?;
         let mut arr = [0u8; 2];
         arr.copy_from_slice(b);
         Ok(u16::from_le_bytes(arr))
     }
 
-    pub fn u32(&mut self) -> Result<u32, String> {
+    pub fn u32(&mut self) -> Result<u32, FactorioError> {
         let b = self.read_bytes(4)?;
         let mut arr = [0u8; 4];
         arr.copy_from_slice(b);
         Ok(u32::from_le_bytes(arr))
     }
 
-    pub fn u64(&mut self) -> Result<u64, String> {
+    pub fn u64(&mut self) -> Result<u64, FactorioError> {
         let b = self.read_bytes(8)?;
         let mut arr = [0u8; 8];
         arr.copy_from_slice(b);
         Ok(u64::from_le_bytes(arr))
     }
 
-    pub fn i64(&mut self) -> Result<i64, String> {
+    pub fn i64(&mut self) -> Result<i64, FactorioError> {
         let b = self.read_bytes(8)?;
         let mut arr = [0u8; 8];
         arr.copy_from_slice(b);
         Ok(i64::from_le_bytes(arr))
     }
 
-    pub fn f64(&mut self) -> Result<f64, String> {
+    pub fn f64(&mut self) -> Result<f64, FactorioError> {
         let b = self.read_bytes(8)?;
         let mut arr = [0u8; 8];
         arr.copy_from_slice(b);
         Ok(f64::from_le_bytes(arr))
     }
 
-    pub fn string(&mut self) -> Result<String, String> {
+    pub fn string(&mut self) -> Result<String, FactorioError> {
         let is_empty = self.bool()?;
         if is_empty {
             return Ok(String::new());
@@ -113,13 +133,14 @@ impl<'a> BinaryReader<'a> {
         }
 
         let bytes = self.read_bytes(length)?;
-        String::from_utf8(bytes.to_vec())
-            .map_err(|e| format!("Invalid UTF-8 string encoding: {}", e))
+        std::str::from_utf8(bytes)
+            .map(|s| s.to_string())
+            .map_err(FactorioError::from)
     }
 }
 
 // ============================================================================
-// 3. Memory-Safe Binary Stream Writer
+// 4. Memory-Safe Binary Stream Writer
 // ============================================================================
 
 pub struct BinaryWriter {
@@ -164,7 +185,7 @@ impl BinaryWriter {
     }
 
     pub fn string(&mut self, val: &str) {
-        self.u8(0); // non-null string prefix (always 0x00 for existing strings)
+        self.u8(0);
         let bytes = val.as_bytes();
         if bytes.len() < 255 {
             self.u8(bytes.len() as u8);
@@ -181,12 +202,12 @@ impl BinaryWriter {
 }
 
 // ============================================================================
-// 4. PropertyTree Recursive Serializers
+// 5. PropertyTree Recursive Serializers
 // ============================================================================
 
-pub fn decode_property_tree(reader: &mut BinaryReader) -> Result<PropertyTree, String> {
+pub fn decode_property_tree(reader: &mut BinaryReader) -> Result<PropertyTree, FactorioError> {
     let type_id = reader.u8()?;
-    let _any_flag = reader.bool()?; // Skip any-type metadata flag
+    let _any_flag = reader.bool()?;
 
     match type_id {
         0 => Ok(PropertyTree::None),
@@ -206,7 +227,7 @@ pub fn decode_property_tree(reader: &mut BinaryReader) -> Result<PropertyTree, S
             let count = reader.u32()?;
             let mut list = Vec::with_capacity(count as usize);
             for _ in 0..count {
-                let _key = reader.string()?; // Discard empty list placeholder key ("")
+                let _key = reader.string()?;
                 let item = decode_property_tree(reader)?;
                 list.push(item);
             }
@@ -230,7 +251,7 @@ pub fn decode_property_tree(reader: &mut BinaryReader) -> Result<PropertyTree, S
             let val = reader.u64()?;
             Ok(PropertyTree::UnsignedInt(val))
         }
-        _ => Err(format!("Unknown PropertyTree type ID: {}", type_id)),
+        _ => Err(FactorioError::UnknownTypeId(type_id)),
     }
 }
 
@@ -260,7 +281,7 @@ pub fn encode_property_tree(writer: &mut BinaryWriter, node: &PropertyTree) {
             writer.bool(false);
             writer.u32(items.len() as u32);
             for item in items {
-                writer.string(""); // list keys are always empty "" in binary format
+                writer.string("");
                 encode_property_tree(writer, item);
             }
         }
@@ -287,19 +308,19 @@ pub fn encode_property_tree(writer: &mut BinaryWriter, node: &PropertyTree) {
 }
 
 // ============================================================================
-// 5. Parallel JSON Flat-Schema Formatting Algorithms
+// 6. Parallel JSON Flat-Schema Formatting Algorithms
 // ============================================================================
 
-fn property_tree_to_json_and_type(node: &PropertyTree) -> (serde_json::Value, String) {
+fn property_tree_to_json_and_type(node: PropertyTree) -> (serde_json::Value, String) {
     match node {
         PropertyTree::None => (serde_json::Value::Null, "none".to_string()),
-        PropertyTree::Bool(b) => (serde_json::Value::Bool(*b), "bool".to_string()),
+        PropertyTree::Bool(b) => (serde_json::Value::Bool(b), "bool".to_string()),
         PropertyTree::Number(f) => (serde_json::json!(f), "number".to_string()),
-        PropertyTree::String(s) => (serde_json::Value::String(s.clone()), "string".to_string()),
+        PropertyTree::String(s) => (serde_json::Value::String(s), "string".to_string()),
         PropertyTree::SignedInt(i) => (serde_json::json!(i), "signed_int".to_string()),
         PropertyTree::UnsignedInt(u) => (serde_json::json!(u), "unsigned_int".to_string()),
         PropertyTree::List(items) => {
-            let arr = items.iter().map(|item| {
+            let arr = items.into_iter().map(|item| {
                 let (v, _) = property_tree_to_json_and_type(item);
                 v
             }).collect();
@@ -307,39 +328,38 @@ fn property_tree_to_json_and_type(node: &PropertyTree) -> (serde_json::Value, St
         }
         PropertyTree::Dictionary(dict) => {
             let mut obj = serde_json::Map::new();
-            for (k, v) in dict {
+            for (k, v) in dict.into_iter() {
                 let (val, _) = property_tree_to_json_and_type(v);
-                obj.insert(k.clone(), val);
+                obj.insert(k, val);
             }
             (serde_json::Value::Object(obj), "dictionary".to_string())
         }
     }
 }
 
-fn infer_json_value_type(val: &serde_json::Value) -> PropertyTree {
+fn infer_json_value_type(val: serde_json::Value) -> PropertyTree {
     match val {
         serde_json::Value::Null => PropertyTree::None,
-        serde_json::Value::Bool(b) => PropertyTree::Bool(*b),
+        serde_json::Value::Bool(b) => PropertyTree::Bool(b),
         serde_json::Value::Number(n) => {
-            // Numbers nested in sub-structures are double floats (type 2) inside Factorio settings
             PropertyTree::Number(n.as_f64().unwrap_or(0.0))
         }
-        serde_json::Value::String(s) => PropertyTree::String(s.clone()),
+        serde_json::Value::String(s) => PropertyTree::String(s),
         serde_json::Value::Array(arr) => {
-            let items = arr.iter().map(infer_json_value_type).collect();
+            let items = arr.into_iter().map(infer_json_value_type).collect();
             PropertyTree::List(items)
         }
         serde_json::Value::Object(obj) => {
             let mut map = Vec::new();
-            for (k, v) in obj {
-                map.push((k.clone(), infer_json_value_type(v)));
+            for (k, v) in obj.into_iter() {
+                map.push((k, infer_json_value_type(v)));
             }
             PropertyTree::Dictionary(map)
         }
     }
 }
 
-fn json_value_to_property_tree(val: &serde_json::Value, type_str: &str) -> PropertyTree {
+fn json_value_to_property_tree(val: serde_json::Value, type_str: &str) -> PropertyTree {
     match type_str {
         "bool" => {
             PropertyTree::Bool(val.as_bool().unwrap_or(false))
@@ -348,7 +368,10 @@ fn json_value_to_property_tree(val: &serde_json::Value, type_str: &str) -> Prope
             PropertyTree::Number(val.as_f64().unwrap_or(0.0))
         }
         "string" => {
-            PropertyTree::String(val.as_str().map(|s| s.to_string()).unwrap_or_else(|| val.to_string()))
+            match val {
+                serde_json::Value::String(s) => PropertyTree::String(s),
+                _ => PropertyTree::String(val.to_string()),
+            }
         }
         "signed_int" => {
             if let Some(i) = val.as_i64() {
@@ -369,18 +392,18 @@ fn json_value_to_property_tree(val: &serde_json::Value, type_str: &str) -> Prope
             }
         }
         "list" => {
-            if let Some(arr) = val.as_array() {
-                let items = arr.iter().map(infer_json_value_type).collect();
+            if let serde_json::Value::Array(arr) = val {
+                let items = arr.into_iter().map(infer_json_value_type).collect();
                 PropertyTree::List(items)
             } else {
                 PropertyTree::List(Vec::new())
             }
         }
         "dictionary" => {
-            if let Some(obj) = val.as_object() {
+            if let serde_json::Value::Object(obj) = val {
                 let mut map = Vec::new();
-                for (k, v) in obj {
-                    map.push((k.clone(), infer_json_value_type(v)));
+                for (k, v) in obj.into_iter() {
+                    map.push((k, infer_json_value_type(v)));
                 }
                 PropertyTree::Dictionary(map)
             } else {
@@ -395,16 +418,16 @@ pub fn property_tree_to_payload(
     version_str: String,
     header_flag: u8,
     root: PropertyTree,
-) -> Result<FactorioSettingsPayload, String> {
+) -> Result<FactorioSettingsPayload, FactorioError> {
     let root_dict = match root {
         PropertyTree::Dictionary(dict) => dict,
-        _ => return Err("Root property tree node must be a Dictionary type".to_string()),
+        _ => return Err(FactorioError::InvalidRootNode),
     };
 
     let mut settings = serde_json::Map::new();
     let mut metadata = serde_json::Map::new();
 
-    for (section_name, section_node) in root_dict {
+    for (section_name, section_node) in root_dict.into_iter() {
         let sec_dict = match section_node {
             PropertyTree::Dictionary(dict) => dict,
             _ => continue,
@@ -413,22 +436,21 @@ pub fn property_tree_to_payload(
         let mut section_settings = serde_json::Map::new();
         let mut section_metadata = serde_json::Map::new();
 
-        for (setting_name, setting_node) in sec_dict {
+        for (setting_name, setting_node) in sec_dict.into_iter() {
             let setting_dict = match setting_node {
                 PropertyTree::Dictionary(dict) => dict,
                 _ => continue,
             };
 
-            // Locate "value" key inside setting dictionary vector
-            if let Some((_, val_node)) = setting_dict.iter().find(|(k, _)| k == "value") {
+            if let Some((_, val_node)) = setting_dict.into_iter().find(|(k, _)| k == "value") {
                 let (json_val, type_str) = property_tree_to_json_and_type(val_node);
                 section_settings.insert(setting_name.clone(), json_val);
-                section_metadata.insert(setting_name.clone(), serde_json::Value::String(type_str));
+                section_metadata.insert(setting_name, serde_json::Value::String(type_str));
             }
         }
 
         settings.insert(section_name.clone(), serde_json::Value::Object(section_settings));
-        metadata.insert(section_name.clone(), serde_json::Value::Object(section_metadata));
+        metadata.insert(section_name, serde_json::Value::Object(section_metadata));
     }
 
     Ok(FactorioSettingsPayload {
@@ -439,30 +461,38 @@ pub fn property_tree_to_payload(
     })
 }
 
-pub fn payload_to_property_tree(payload: FactorioSettingsPayload) -> Result<PropertyTree, String> {
+pub fn payload_to_property_tree(payload: FactorioSettingsPayload) -> Result<PropertyTree, FactorioError> {
     let mut root_dict = Vec::new();
 
-    for (section_name, section_settings_val) in payload.settings {
+    for (section_name, section_settings_val) in payload.settings.into_iter() {
         let section_settings = match section_settings_val {
             serde_json::Value::Object(obj) => obj,
             _ => continue,
         };
 
-        let section_metadata = payload.metadata.get(&section_name)
-            .and_then(|v| v.as_object());
+        let mut section_metadata = payload.metadata.get(&section_name)
+            .and_then(|v| v.as_object().cloned());
 
         let mut section_dict = Vec::new();
 
-        for (setting_name, val) in section_settings {
+        for (setting_name, val) in section_settings.into_iter() {
             let mut setting_container = Vec::new();
 
-            let type_str = if let Some(meta) = section_metadata {
-                meta.get(&setting_name).and_then(|v| v.as_str()).unwrap_or("string")
+            let type_str = if let Some(ref mut meta) = section_metadata {
+                meta.remove(&setting_name)
+                    .and_then(|v| {
+                        if let serde_json::Value::String(s) = v {
+                            Some(s)
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or_else(|| "string".to_string())
             } else {
-                "string"
+                "string".to_string()
             };
 
-            let pt_val = json_value_to_property_tree(&val, type_str);
+            let pt_val = json_value_to_property_tree(val, &type_str);
             setting_container.push(("value".to_string(), pt_val));
 
             section_dict.push((setting_name, PropertyTree::Dictionary(setting_container)));
@@ -475,10 +505,10 @@ pub fn payload_to_property_tree(payload: FactorioSettingsPayload) -> Result<Prop
 }
 
 // ============================================================================
-// 6. Primary Library Endpoints (JSON File <=> DAT Binary)
+// 7. Primary Library Endpoints (JSON File <=> DAT Binary)
 // ============================================================================
 
-pub fn decode_dat_to_json(dat_bytes: &[u8]) -> Result<String, String> {
+pub fn decode_dat_to_json(dat_bytes: &[u8]) -> Result<String, FactorioError> {
     let mut reader = BinaryReader::new(dat_bytes);
 
     let major = reader.u16()?;
@@ -494,24 +524,23 @@ pub fn decode_dat_to_json(dat_bytes: &[u8]) -> Result<String, String> {
     let payload = property_tree_to_payload(version_str, flag, root)?;
 
     serde_json::to_string_pretty(&payload)
-        .map_err(|e| format!("Failed to format decoded payload to JSON string: {}", e))
+        .map_err(FactorioError::from)
 }
 
-pub fn encode_json_to_dat(json_str: &str) -> Result<Vec<u8>, String> {
-    let payload: FactorioSettingsPayload = serde_json::from_str(json_str)
-        .map_err(|e| format!("JSON configuration structure parsing failure: {}", e))?;
+pub fn encode_json_to_dat(json_str: &str) -> Result<Vec<u8>, FactorioError> {
+    let payload: FactorioSettingsPayload = serde_json::from_str(json_str)?;
 
     let mut writer = BinaryWriter::new();
 
     let parts: Vec<&str> = payload.factorio_version.split('.').collect();
     if parts.len() != 4 {
-        return Err("Factorio version identifier format must match 'X.Y.Z.W'".to_string());
+        return Err(FactorioError::InvalidVersionFormat);
     }
 
-    let major = parts[0].parse::<u16>().map_err(|_| "Invalid major version integer")?;
-    let minor = parts[1].parse::<u16>().map_err(|_| "Invalid minor version integer")?;
-    let patch = parts[2].parse::<u16>().map_err(|_| "Invalid patch version integer")?;
-    let build = parts[3].parse::<u16>().map_err(|_| "Invalid developer/build version integer")?;
+    let major = parts[0].parse::<u16>()?;
+    let minor = parts[1].parse::<u16>()?;
+    let patch = parts[2].parse::<u16>()?;
+    let build = parts[3].parse::<u16>()?;
 
     writer.u16(major);
     writer.u16(minor);
@@ -526,7 +555,7 @@ pub fn encode_json_to_dat(json_str: &str) -> Result<Vec<u8>, String> {
 }
 
 // ============================================================================
-// 7. C-Compatible FFI Interface Exports (Perfect for Bun FFI)
+// 8. C-Compatible FFI Interface Exports (Perfect for Bun FFI)
 // ============================================================================
 
 #[no_mangle]
@@ -537,12 +566,21 @@ pub extern "C" fn decode_settings_dat(dat_ptr: *const u8, dat_len: usize) -> *mu
     let data = unsafe { std::slice::from_raw_parts(dat_ptr, dat_len) };
     match decode_dat_to_json(data) {
         Ok(json_str) => {
-            let c_str = CString::new(json_str).unwrap();
-            c_str.into_raw()
+            match CString::new(json_str) {
+                Ok(c_str) => c_str.into_raw(),
+                Err(_) => {
+                    CString::new("ERROR: Null byte found in generated JSON string").unwrap().into_raw()
+                }
+            }
         }
         Err(err) => {
-            let c_err = CString::new(format!("ERROR: {}", err)).unwrap();
-            c_err.into_raw()
+            let err_msg = format!("ERROR: {}", err);
+            match CString::new(err_msg) {
+                Ok(c_str) => c_str.into_raw(),
+                Err(_) => {
+                    CString::new("ERROR: Null byte found in error message").unwrap().into_raw()
+                }
+            }
         }
     }
 }
@@ -564,10 +602,8 @@ pub extern "C" fn encode_settings_dat(json_ptr: *const c_char, out_len: *mut usi
     match encode_json_to_dat(json_str) {
         Ok(bytes) => {
             unsafe { *out_len = bytes.len() };
-            let mut boxed = bytes.into_boxed_slice();
-            let ptr = boxed.as_mut_ptr();
-            std::mem::forget(boxed); // Hand over pointer ownership to host process allocator
-            ptr
+            let boxed = bytes.into_boxed_slice();
+            Box::into_raw(boxed) as *mut u8
         }
         Err(err) => {
             eprintln!("Rust FFI serialization failure: {}", err);
@@ -587,6 +623,43 @@ pub extern "C" fn free_string(ptr: *mut c_char) {
 #[no_mangle]
 pub extern "C" fn free_bytes(ptr: *mut u8, len: usize) {
     if !ptr.is_null() {
-        unsafe { Vec::from_raw_parts(ptr, len, len) };
+        unsafe {
+            let fat_ptr = std::ptr::slice_from_raw_parts_mut(ptr, len);
+            let _ = Box::from_raw(fat_ptr);
+        }
+    }
+}
+
+// ============================================================================
+// 9. Automated Testing
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_roundtrip_json() {
+        let json_input = r#"{
+          "factorio_version": "2.0.76.0",
+          "header_bool_flag": 0,
+          "settings": {
+            "startup": {
+              "test-setting": "value"
+            }
+          },
+          "metadata": {
+            "startup": {
+              "test-setting": "string"
+            }
+          }
+        }"#;
+
+        let bytes = encode_json_to_dat(json_input).expect("Encoding failed");
+        let decoded_json = decode_dat_to_json(&bytes).expect("Decoding failed");
+
+        let v1: serde_json::Value = serde_json::from_str(json_input).unwrap();
+        let v2: serde_json::Value = serde_json::from_str(&decoded_json).unwrap();
+        assert_eq!(v1, v2);
     }
 }

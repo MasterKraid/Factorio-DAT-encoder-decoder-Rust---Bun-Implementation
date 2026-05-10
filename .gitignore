@@ -10,3 +10,4 @@ target/
 /test_encoded.dat
 /test_ffi_encoded.dat
 /py_encoded.dat
+/mod-settings.dat

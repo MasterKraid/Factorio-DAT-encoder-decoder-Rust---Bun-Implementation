@@ -567,12 +567,12 @@ pub fn encode_json_to_dat(json_str: &str) -> Result<Vec<u8>, FactorioError> {
 /// This function dereferences raw pointers. The caller must guarantee that:
 /// * `dat_ptr` is a valid, initialized pointer to a byte buffer of at least `dat_len` bytes.
 /// * The memory referenced by `dat_ptr` remains immutable during execution.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn decode_settings_dat(dat_ptr: *const u8, dat_len: usize) -> *mut c_char {
     if dat_ptr.is_null() {
         return std::ptr::null_mut();
     }
-    let data = std::slice::from_raw_parts(dat_ptr, dat_len);
+    let data = unsafe { std::slice::from_raw_parts(dat_ptr, dat_len) };
     match decode_dat_to_json(data) {
         Ok(json_str) => match CString::new(json_str) {
             Ok(c_str) => c_str.into_raw(),
@@ -599,7 +599,7 @@ pub unsafe extern "C" fn decode_settings_dat(dat_ptr: *const u8, dat_len: usize)
 /// This function dereferences raw pointers. The caller must guarantee that:
 /// * `json_ptr` is a valid, null-terminated C-string pointer.
 /// * `out_len` is a valid, writable pointer to a `usize` value.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn encode_settings_dat(
     json_ptr: *const c_char,
     out_len: *mut usize,
@@ -607,24 +607,24 @@ pub unsafe extern "C" fn encode_settings_dat(
     if json_ptr.is_null() {
         return std::ptr::null_mut();
     }
-    let c_str = CStr::from_ptr(json_ptr);
+    let c_str = unsafe { CStr::from_ptr(json_ptr) };
     let json_str = match c_str.to_str() {
         Ok(s) => s,
         Err(_) => {
-            *out_len = 0;
+            unsafe { *out_len = 0 };
             return std::ptr::null_mut();
         }
     };
 
     match encode_json_to_dat(json_str) {
         Ok(bytes) => {
-            *out_len = bytes.len();
+            unsafe { *out_len = bytes.len() };
             let boxed = bytes.into_boxed_slice();
             Box::into_raw(boxed) as *mut u8
         }
         Err(err) => {
             eprintln!("Rust FFI serialization failure: {}", err);
-            *out_len = 0;
+            unsafe { *out_len = 0 };
             std::ptr::null_mut()
         }
     }
@@ -637,10 +637,12 @@ pub unsafe extern "C" fn encode_settings_dat(
 /// This function dereferences raw pointers. The caller must guarantee that:
 /// * `ptr` is a valid raw pointer allocated previously by `decode_settings_dat`.
 /// * This pointer has not been freed or modified previously.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn free_string(ptr: *mut c_char) {
     if !ptr.is_null() {
-        let _ = CString::from_raw(ptr);
+        unsafe {
+            let _ = CString::from_raw(ptr);
+        }
     }
 }
 
@@ -652,11 +654,13 @@ pub unsafe extern "C" fn free_string(ptr: *mut c_char) {
 /// * `ptr` is a valid raw pointer allocated previously by `encode_settings_dat`.
 /// * `len` matches the exact buffer size written during allocation.
 /// * This pointer has not been freed or modified previously.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn free_bytes(ptr: *mut u8, len: usize) {
     if !ptr.is_null() {
-        let fat_ptr = std::ptr::slice_from_raw_parts_mut(ptr, len);
-        let _ = Box::from_raw(fat_ptr);
+        unsafe {
+            let fat_ptr = std::ptr::slice_from_raw_parts_mut(ptr, len);
+            let _ = Box::from_raw(fat_ptr);
+        }
     }
 }
 
